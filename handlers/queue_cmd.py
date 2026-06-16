@@ -26,3 +26,4 @@ def register(app: Client) -> None:
 
         text = f"📋 **Queue — {msg.chat.title}**\n\n" + "\n".join(lines)
         await msg.reply_text(text, quote=True)
+        
