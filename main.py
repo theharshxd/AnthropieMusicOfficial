@@ -7,6 +7,7 @@ import logging
 import threading
 
 from pyrogram import Client
+from pyrogram.errors import FloodWait
 
 from config import Config
 from core.cleanup import periodic_cleanup_task
@@ -64,6 +65,23 @@ async def db_keepalive_task() -> None:
                 logger.error("[main] MongoDB reconnect failed: %s", exc)
 
 
+async def _start_client(client: Client, name: str) -> None:
+    """Start a Pyrogram client, waiting out any FloodWait before retrying."""
+    while True:
+        try:
+            await client.start()
+            return
+        except FloodWait as e:
+            logger.warning(
+                "[main] %s hit FloodWait — Telegram says wait %d seconds. Waiting...",
+                name, e.value,
+            )
+            await asyncio.sleep(e.value + 5)  # +5 second buffer
+        except Exception as exc:
+            logger.error("[main] %s failed to start: %s", name, exc)
+            raise
+
+
 async def main() -> None:
     import uvloop
     uvloop.install()
@@ -85,9 +103,9 @@ async def main() -> None:
     web_thread.start()
     logger.info("Health server started on port %d", Config.PORT)
 
-    # ✅ Start clients BEFORE registering handlers
-    await bot.start()
-    await assistant.start()
+    # ✅ Start clients BEFORE registering handlers (with FloodWait retry)
+    await _start_client(bot, "Bot")
+    await _start_client(assistant, "Assistant")
     bot_me = await bot.get_me()
     asst_me = await assistant.get_me()
     logger.info("Bot started     : @%s (id=%d)", bot_me.username, bot_me.id)
