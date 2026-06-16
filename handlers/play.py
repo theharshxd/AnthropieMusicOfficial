@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 
 from pyrogram import Client, filters
-from pyrogram.enums import ChatType
 from pyrogram.types import Message
 
 from config import Config
@@ -23,16 +22,16 @@ def register(app: Client, stream: StreamManager) -> None:
     @app.on_message(filters.command(["play", "vplay"]) & filters.group)
     async def play_cmd(client: Client, msg: Message):
         chat_id = msg.chat.id
-        user_id = msg.from_user.id
+        user_id = msg.from_user.id if msg.from_user else None
         mention = get_mention(msg)
 
-        await mongo.add_served_user(user_id)
+        if user_id:
+            await mongo.add_served_user(user_id)
         await mongo.add_served_chat(chat_id)
 
         # ── Resolve query ─────────────────────────────────────────────────────
         query = None
 
-        # Priority 1: replied audio/video/document
         if msg.reply_to_message:
             rep = msg.reply_to_message
             if rep.audio:
@@ -44,7 +43,6 @@ def register(app: Client, stream: StreamManager) -> None:
             elif rep.text:
                 query = rep.text.strip()
 
-        # Priority 2: text after command
         if not query:
             parts = msg.text.split(None, 1)
             if len(parts) > 1:
@@ -86,7 +84,6 @@ def register(app: Client, stream: StreamManager) -> None:
         current_status = stream.get_status(chat_id)
 
         if current_status == "idle":
-            # Nothing playing — start immediately
             try:
                 await status_msg.edit_text(f"▶️ Starting: **{track['title']}**")
             except Exception:
@@ -102,7 +99,7 @@ def register(app: Client, stream: StreamManager) -> None:
                 except Exception:
                     pass
         else:
-            # Already playing — added to queue
+            # Already playing — show queue position
             try:
                 await status_msg.edit_text(
                     f"✅ **Added to Queue** #{position}\n"
@@ -114,3 +111,4 @@ def register(app: Client, stream: StreamManager) -> None:
                 pass
 
         await Q.save_to_db(chat_id)
+        
