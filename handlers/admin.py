@@ -91,3 +91,4 @@ def register(app: Client, stream: StreamManager) -> None:
 
         await _refresh_admins(client, msg.chat.id)
         await msg.reply_text("🔄 Admin cache refreshed.", quote=True)
+        
