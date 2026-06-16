@@ -5,6 +5,8 @@ services:
     buildCommand: apt-get install -y ffmpeg && pip install -r requirements.txt
     startCommand: python main.py
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.0"
       - key: BOT_TOKEN
         sync: false
       - key: API_ID
