@@ -12,8 +12,8 @@ import os
 
 from pyrogram import Client
 from pytgcalls import PyTgCalls, filters as fl
-from pytgcalls.types import MediaStream, AudioQuality
-from pytgcalls.types import StreamAudioEnded, StreamVideoEnded
+from pytgcalls.types import MediaStream, AudioQuality, Update
+from pytgcalls.types.stream import StreamAudioEnded, StreamVideoEnded
 from pytgcalls.exceptions import NoActiveGroupCall, NotInCallError
 
 from config import Config
@@ -32,9 +32,8 @@ class StreamManager:
         self._duration_tasks: dict[int, asyncio.Task] = {}
 
     async def start(self) -> None:
-        # Register stream-ended callback using new 2.x API
         @self.calls.on_update(fl.stream_end)
-        async def _on_end(client, update):
+        async def _on_end(client, update: Update):
             if isinstance(update, (StreamAudioEnded, StreamVideoEnded)):
                 await self._handle_song_end(update.chat_id)
 
@@ -44,11 +43,6 @@ class StreamManager:
     # ── Public API ────────────────────────────────────────────────────────────
 
     async def play(self, chat_id: int, track: dict) -> bool:
-        """
-        Start streaming `track` in the voice chat of `chat_id`.
-        `track` must have a valid `file_path`.
-        Returns True on success.
-        """
         file_path = track.get("file_path")
         if not file_path or not os.path.exists(file_path):
             logger.error("[stream] file not found: %s", file_path)
@@ -69,15 +63,11 @@ class StreamManager:
             state["status"] = "idle"
             return False
 
-        # Schedule prefetch when nearing end
         duration = track.get("duration", 0)
         self._schedule_prefetch(chat_id, duration)
 
-        # Send Now Playing
         await nowplaying.delete_now_playing(self.bot, chat_id)
         await nowplaying.send_now_playing(self.bot, chat_id, track)
-
-        # Persist queue to DB
         await Q.save_to_db(chat_id)
         return True
 
@@ -104,12 +94,10 @@ class StreamManager:
             return False
 
     async def skip(self, chat_id: int) -> bool:
-        """Skip current track and play next."""
         await self._cleanup_current(chat_id)
         return await self._play_next(chat_id)
 
     async def stop(self, chat_id: int, leave: bool = True) -> None:
-        """Stop stream, optionally leave VC, full cleanup."""
         self._cancel_prefetch_timer(chat_id)
         await Q.wait_for_prefetch(chat_id)
 
@@ -139,14 +127,12 @@ class StreamManager:
     # ── Internal ──────────────────────────────────────────────────────────────
 
     async def _handle_song_end(self, chat_id: int) -> None:
-        """Called by PyTgCalls when a track finishes naturally."""
         logger.info("[stream] song ended in chat %d", chat_id)
         self._cancel_prefetch_timer(chat_id)
         await self._cleanup_current(chat_id)
         await self._play_next(chat_id)
 
     async def _cleanup_current(self, chat_id: int) -> None:
-        """Delete current file and free RAM."""
         self._cancel_prefetch_timer(chat_id)
         state = Q.get_state(chat_id)
         cleanup.cleanup_after_song(state.get("current_file"))
@@ -154,12 +140,10 @@ class StreamManager:
         Q.pop_current(chat_id)
 
     async def _play_next(self, chat_id: int) -> bool:
-        """Play the next track in queue. Returns True if started."""
         await Q.wait_for_prefetch(chat_id)
 
         next_track = Q.get_current(chat_id)
         if not next_track:
-            # Queue empty
             await nowplaying.delete_now_playing(self.bot, chat_id)
             Q.get_state(chat_id)["status"] = "idle"
             try:
@@ -172,13 +156,11 @@ class StreamManager:
 
         state = Q.get_state(chat_id)
 
-        # Use pre-downloaded file if available
         if state.get("prefetched_file") and os.path.exists(state["prefetched_file"]):
             next_track["file_path"] = state["prefetched_file"]
             state["prefetched_file"] = None
             logger.info("[stream] using pre-downloaded file for next track")
         else:
-            # Pre-download wasn't ready — download now
             from core.downloader import download_audio
             logger.info("[stream] pre-download not ready, downloading now...")
             result = await download_audio(
@@ -193,19 +175,14 @@ class StreamManager:
         return await self.play(chat_id, next_track)
 
     def _schedule_prefetch(self, chat_id: int, duration: int) -> None:
-        """Schedule background prefetch PREFETCH_AT_SECONDS before end."""
         self._cancel_prefetch_timer(chat_id)
-
-        delay = duration - Config.PREFETCH_AT_SECONDS
-        if delay < 5:
-            delay = 5  # minimum 5 second delay
+        delay = max(duration - Config.PREFETCH_AT_SECONDS, 5)
 
         async def _trigger():
             await asyncio.sleep(delay)
             await Q.trigger_prefetch(chat_id)
 
-        task = asyncio.create_task(_trigger())
-        self._duration_tasks[chat_id] = task
+        self._duration_tasks[chat_id] = asyncio.create_task(_trigger())
 
     def _cancel_prefetch_timer(self, chat_id: int) -> None:
         task = self._duration_tasks.pop(chat_id, None)
