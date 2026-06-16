@@ -1,7 +1,6 @@
 """
 core/stream.py
-Streaming engine — reads local file via ffmpeg → PyTgCalls → Telegram VC.
-Handles pre-download trigger, song-end callback, cleanup.
+Streaming engine — pytgcalls 2.x API (MediaStream / play / pause / resume).
 """
 
 from __future__ import annotations
@@ -12,8 +11,8 @@ import os
 
 from pyrogram import Client
 from pytgcalls import PyTgCalls, filters as fl
-from pytgcalls.types import MediaStream, AudioQuality
 from pytgcalls.exceptions import NoActiveGroupCall, NotInCallError
+from pytgcalls.types import AudioQuality, MediaStream
 
 from config import Config
 from core import cleanup, nowplaying
@@ -31,9 +30,6 @@ class StreamManager:
         self._duration_tasks: dict[int, asyncio.Task] = {}
 
     async def start(self) -> None:
-        # Use fl.stream_end filter — no isinstance check needed,
-        # the filter already guarantees it's a stream-end event.
-        # chat_id attribute exists on all stream end update types.
         @self.calls.on_update(fl.stream_end)
         async def _on_end(client, update):
             chat_id = getattr(update, "chat_id", None)
@@ -43,7 +39,7 @@ class StreamManager:
         await self.calls.start()
         logger.info("[stream] PyTgCalls started")
 
-    # ── Public API ────────────────────────────────────────────────────────────
+    # ── Public API ─────────────────────────────────────────────────────────────
 
     async def play(self, chat_id: int, track: dict) -> bool:
         file_path = track.get("file_path")
@@ -60,9 +56,9 @@ class StreamManager:
                 chat_id,
                 MediaStream(file_path, audio_quality=AudioQuality.HIGH),
             )
-            logger.info("[stream] started playing '%s' in %d", track["title"], chat_id)
+            logger.info("[stream] playing '%s' in %d", track["title"], chat_id)
         except Exception as exc:
-            logger.error("[stream] play failed for %d: %s", chat_id, exc)
+            logger.error("[stream] play() failed for %d: %s", chat_id, exc)
             state["status"] = "idle"
             return False
 
@@ -76,7 +72,7 @@ class StreamManager:
 
     async def pause(self, chat_id: int) -> bool:
         try:
-            await self.calls.pause_stream(chat_id)
+            await self.calls.pause(chat_id)
             Q.get_state(chat_id)["status"] = "paused"
             return True
         except (NotInCallError, NoActiveGroupCall):
@@ -87,7 +83,7 @@ class StreamManager:
 
     async def resume(self, chat_id: int) -> bool:
         try:
-            await self.calls.resume_stream(chat_id)
+            await self.calls.resume(chat_id)
             Q.get_state(chat_id)["status"] = "playing"
             return True
         except (NotInCallError, NoActiveGroupCall):
@@ -127,7 +123,7 @@ class StreamManager:
     def active_chats(self) -> list:
         return [cid for cid, s in Q._chats.items() if s.get("status") != "idle"]
 
-    # ── Internal ──────────────────────────────────────────────────────────────
+    # ── Internal ───────────────────────────────────────────────────────────────
 
     async def _handle_song_end(self, chat_id: int) -> None:
         logger.info("[stream] song ended in chat %d", chat_id)
@@ -191,4 +187,3 @@ class StreamManager:
         task = self._duration_tasks.pop(chat_id, None)
         if task and not task.done():
             task.cancel()
-            
