@@ -1,6 +1,9 @@
 """
-core/stream.py — pytgcalls 2.x streaming engine
-Uses on_stream_end() decorator (available in 2.x), MediaStream, AudioQuality.
+core/stream.py — pytgcalls 2.2.1 verified API
+  - leave_call()          (NOT leave_group_call)
+  - MediaStream(path, audio_parameters=AudioQuality.HIGH)  (NOT audio_quality=)
+  - on_update(fl.stream_end)  (on_stream_end() does NOT exist in 2.2.1)
+  - pause(chat_id) / resume(chat_id) confirmed
 """
 from __future__ import annotations
 
@@ -9,7 +12,8 @@ import logging
 import os
 
 from pyrogram import Client
-from pytgcalls import PyTgCalls
+from pytgcalls import PyTgCalls, filters as fl
+from pytgcalls.exceptions import NoActiveGroupCall, NotInCallError
 from pytgcalls.types import AudioQuality, MediaStream
 
 from config import Config
@@ -18,9 +22,6 @@ from core import queue as Q
 from db import mongo
 
 logger = logging.getLogger(__name__)
-
-# Broad exception catch — exception class names differ across py-tgcalls versions
-_CALL_ERRORS = Exception
 
 
 class StreamManager:
@@ -31,14 +32,14 @@ class StreamManager:
         self._duration_tasks: dict[int, asyncio.Task] = {}
 
     async def start(self) -> None:
-        @self.calls.on_stream_end()
-        async def _on_end(_, update):
+        @self.calls.on_update(fl.stream_end)
+        async def _on_end(client, update):
             chat_id = getattr(update, "chat_id", None)
             if chat_id is not None:
                 asyncio.create_task(self._handle_song_end(chat_id))
 
         await self.calls.start()
-        logger.info("[stream] PyTgCalls started OK")
+        logger.info("[stream] PyTgCalls 2.x started OK")
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -53,9 +54,10 @@ class StreamManager:
         state["status"] = "playing"
 
         try:
+            # audio_parameters= (NOT audio_quality=) per 2.2.1 API
             await self.calls.play(
                 chat_id,
-                MediaStream(file_path, audio_quality=AudioQuality.HIGH),
+                MediaStream(file_path, audio_parameters=AudioQuality.HIGH),
             )
             logger.info("[stream] playing '%s' in chat %d", track["title"], chat_id)
         except Exception as exc:
@@ -74,6 +76,8 @@ class StreamManager:
             await self.calls.pause(chat_id)
             Q.get_state(chat_id)["status"] = "paused"
             return True
+        except (NotInCallError, NoActiveGroupCall):
+            return False
         except Exception as exc:
             logger.warning("[stream] pause error %d: %s", chat_id, exc)
             return False
@@ -83,6 +87,8 @@ class StreamManager:
             await self.calls.resume(chat_id)
             Q.get_state(chat_id)["status"] = "playing"
             return True
+        except (NotInCallError, NoActiveGroupCall):
+            return False
         except Exception as exc:
             logger.warning("[stream] resume error %d: %s", chat_id, exc)
             return False
@@ -97,9 +103,11 @@ class StreamManager:
         cleanup.full_cleanup_chat(Q.get_state(chat_id))
         if leave:
             try:
-                await self.calls.leave_group_call(chat_id)
+                await self.calls.leave_call(chat_id)   # leave_call() in 2.x
+            except (NotInCallError, NoActiveGroupCall):
+                pass
             except Exception as exc:
-                logger.warning("[stream] leave error %d: %s", chat_id, exc)
+                logger.warning("[stream] leave_call error %d: %s", chat_id, exc)
         await nowplaying.delete_now_playing(self.bot, chat_id)
         Q.clear_queue(chat_id)
         Q.reset_state(chat_id)
@@ -134,7 +142,7 @@ class StreamManager:
             await nowplaying.delete_now_playing(self.bot, chat_id)
             Q.get_state(chat_id)["status"] = "idle"
             try:
-                await self.calls.leave_group_call(chat_id)
+                await self.calls.leave_call(chat_id)   # leave_call() in 2.x
             except Exception:
                 pass
             await mongo.clear_queue_backup(chat_id)
