@@ -12,8 +12,7 @@ import os
 
 from pyrogram import Client
 from pytgcalls import PyTgCalls, filters as fl
-from pytgcalls.types import MediaStream, AudioQuality, Update
-from pytgcalls.types.stream import StreamAudioEnded, StreamVideoEnded
+from pytgcalls.types import MediaStream, AudioQuality
 from pytgcalls.exceptions import NoActiveGroupCall, NotInCallError
 
 from config import Config
@@ -32,10 +31,14 @@ class StreamManager:
         self._duration_tasks: dict[int, asyncio.Task] = {}
 
     async def start(self) -> None:
+        # Use fl.stream_end filter — no isinstance check needed,
+        # the filter already guarantees it's a stream-end event.
+        # chat_id attribute exists on all stream end update types.
         @self.calls.on_update(fl.stream_end)
-        async def _on_end(client, update: Update):
-            if isinstance(update, (StreamAudioEnded, StreamVideoEnded)):
-                await self._handle_song_end(update.chat_id)
+        async def _on_end(client, update):
+            chat_id = getattr(update, "chat_id", None)
+            if chat_id is not None:
+                await self._handle_song_end(chat_id)
 
         await self.calls.start()
         logger.info("[stream] PyTgCalls started")
