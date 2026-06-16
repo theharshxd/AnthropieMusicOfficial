@@ -1,5 +1,6 @@
 """
 main.py — Anthropie Music Bot entry point
+Web server starts FIRST so Render health check passes immediately.
 """
 
 import asyncio
@@ -87,16 +88,21 @@ async def main() -> None:
     logger.info("  Anthropie Music Bot — Starting")
     logger.info("=" * 50)
 
-    # 1. MongoDB
+    # 1. Start web/health server FIRST — Render's health check must pass fast
+    web_thread = threading.Thread(target=run_web_server, daemon=True)
+    web_thread.start()
+    logger.info("Health server started on port %d", Config.PORT)
+
+    # 2. MongoDB
     await mongo.connect()
 
-    # 2. Load sudo cache
+    # 3. Load sudo cache
     db_sudos = await mongo.get_sudos()
     for uid in db_sudos:
         helpers.add_sudo_cache(uid)
     logger.info("Loaded %d sudo user(s) from DB.", len(db_sudos))
 
-    # 3. Start bot clients first
+    # 4. Start bot clients
     await _start_client(bot, "Bot")
     await _start_client(assistant, "Assistant")
 
@@ -105,17 +111,12 @@ async def main() -> None:
     logger.info("Bot      : @%s (id=%d)", bot_me.username, bot_me.id)
     logger.info("Assistant: @%s (id=%d)", asst_me.username, asst_me.id)
 
-    # 4. Build stream manager and register handlers
+    # 5. Build stream manager and register handlers
     stream = StreamManager(assistant, bot)
     register_all_handlers(stream)
 
-    # 5. Start PyTgCalls
+    # 6. Start PyTgCalls
     await stream.start()
-
-    # 6. Start web server (health check for Render)
-    web_thread = threading.Thread(target=run_web_server, daemon=True)
-    web_thread.start()
-    logger.info("Health server started on port %d", Config.PORT)
 
     # 7. Background tasks
     asyncio.create_task(periodic_cleanup_task())
