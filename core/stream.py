@@ -1,8 +1,7 @@
 """
-core/stream.py
-Streaming engine — pytgcalls 2.x API (MediaStream / play / pause / resume).
+core/stream.py — pytgcalls 2.x streaming engine
+Uses on_stream_end() decorator (available in 2.x), MediaStream, AudioQuality.
 """
-
 from __future__ import annotations
 
 import asyncio
@@ -10,8 +9,7 @@ import logging
 import os
 
 from pyrogram import Client
-from pytgcalls import PyTgCalls, filters as fl
-from pytgcalls.exceptions import NoActiveGroupCall, NotInCallError
+from pytgcalls import PyTgCalls
 from pytgcalls.types import AudioQuality, MediaStream
 
 from config import Config
@@ -20,6 +18,9 @@ from core import queue as Q
 from db import mongo
 
 logger = logging.getLogger(__name__)
+
+# Broad exception catch — exception class names differ across py-tgcalls versions
+_CALL_ERRORS = Exception
 
 
 class StreamManager:
@@ -30,14 +31,14 @@ class StreamManager:
         self._duration_tasks: dict[int, asyncio.Task] = {}
 
     async def start(self) -> None:
-        @self.calls.on_update(fl.stream_end)
-        async def _on_end(client, update):
+        @self.calls.on_stream_end()
+        async def _on_end(_, update):
             chat_id = getattr(update, "chat_id", None)
             if chat_id is not None:
-                await self._handle_song_end(chat_id)
+                asyncio.create_task(self._handle_song_end(chat_id))
 
         await self.calls.start()
-        logger.info("[stream] PyTgCalls started")
+        logger.info("[stream] PyTgCalls started OK")
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -56,15 +57,13 @@ class StreamManager:
                 chat_id,
                 MediaStream(file_path, audio_quality=AudioQuality.HIGH),
             )
-            logger.info("[stream] playing '%s' in %d", track["title"], chat_id)
+            logger.info("[stream] playing '%s' in chat %d", track["title"], chat_id)
         except Exception as exc:
             logger.error("[stream] play() failed for %d: %s", chat_id, exc)
             state["status"] = "idle"
             return False
 
-        duration = track.get("duration", 0)
-        self._schedule_prefetch(chat_id, duration)
-
+        self._schedule_prefetch(chat_id, track.get("duration", 0))
         await nowplaying.delete_now_playing(self.bot, chat_id)
         await nowplaying.send_now_playing(self.bot, chat_id, track)
         await Q.save_to_db(chat_id)
@@ -75,8 +74,6 @@ class StreamManager:
             await self.calls.pause(chat_id)
             Q.get_state(chat_id)["status"] = "paused"
             return True
-        except (NotInCallError, NoActiveGroupCall):
-            return False
         except Exception as exc:
             logger.warning("[stream] pause error %d: %s", chat_id, exc)
             return False
@@ -86,8 +83,6 @@ class StreamManager:
             await self.calls.resume(chat_id)
             Q.get_state(chat_id)["status"] = "playing"
             return True
-        except (NotInCallError, NoActiveGroupCall):
-            return False
         except Exception as exc:
             logger.warning("[stream] resume error %d: %s", chat_id, exc)
             return False
@@ -99,23 +94,17 @@ class StreamManager:
     async def stop(self, chat_id: int, leave: bool = True) -> None:
         self._cancel_prefetch_timer(chat_id)
         await Q.wait_for_prefetch(chat_id)
-
-        state = Q.get_state(chat_id)
-        cleanup.full_cleanup_chat(state)
-
-        try:
-            if leave:
+        cleanup.full_cleanup_chat(Q.get_state(chat_id))
+        if leave:
+            try:
                 await self.calls.leave_group_call(chat_id)
-        except (NotInCallError, NoActiveGroupCall):
-            pass
-        except Exception as exc:
-            logger.warning("[stream] leave VC error %d: %s", chat_id, exc)
-
+            except Exception as exc:
+                logger.warning("[stream] leave error %d: %s", chat_id, exc)
         await nowplaying.delete_now_playing(self.bot, chat_id)
         Q.clear_queue(chat_id)
         Q.reset_state(chat_id)
         await mongo.clear_queue_backup(chat_id)
-        logger.info("[stream] stopped and cleaned up chat %d", chat_id)
+        logger.info("[stream] stopped chat %d", chat_id)
 
     def get_status(self, chat_id: int) -> str:
         return Q.get_state(chat_id).get("status", "idle")
@@ -140,7 +129,6 @@ class StreamManager:
 
     async def _play_next(self, chat_id: int) -> bool:
         await Q.wait_for_prefetch(chat_id)
-
         next_track = Q.get_current(chat_id)
         if not next_track:
             await nowplaying.delete_now_playing(self.bot, chat_id)
@@ -154,19 +142,15 @@ class StreamManager:
             return False
 
         state = Q.get_state(chat_id)
-
         if state.get("prefetched_file") and os.path.exists(state["prefetched_file"]):
             next_track["file_path"] = state["prefetched_file"]
             state["prefetched_file"] = None
-            logger.info("[stream] using pre-downloaded file for next track")
         else:
             from core.downloader import download_audio
-            logger.info("[stream] pre-download not ready, downloading now...")
             result = await download_audio(
                 next_track["query"], chat_id, next_track["requested_by"]
             )
             if not result:
-                logger.error("[stream] download failed for next track, skipping")
                 Q.pop_current(chat_id)
                 return await self._play_next(chat_id)
             next_track.update(result)
@@ -176,11 +160,9 @@ class StreamManager:
     def _schedule_prefetch(self, chat_id: int, duration: int) -> None:
         self._cancel_prefetch_timer(chat_id)
         delay = max(duration - Config.PREFETCH_AT_SECONDS, 5)
-
         async def _trigger():
             await asyncio.sleep(delay)
             await Q.trigger_prefetch(chat_id)
-
         self._duration_tasks[chat_id] = asyncio.create_task(_trigger())
 
     def _cancel_prefetch_timer(self, chat_id: int) -> None:
