@@ -1,6 +1,6 @@
 pyrogram==2.0.106
 tgcrypto==1.2.5
-py-tgcalls==2.3.1
+py-tgcalls==2.2.1
 uvloop==0.22.1
 motor==3.7.0
 pymongo==4.10.1
