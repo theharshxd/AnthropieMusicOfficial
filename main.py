@@ -80,18 +80,21 @@ async def main() -> None:
     logger.info("Loaded %d sudo user(s) from DB.", len(db_sudos))
 
     stream = StreamManager(assistant, bot)
-    register_all_handlers(stream)
 
     web_thread = threading.Thread(target=run_web_server, daemon=True)
     web_thread.start()
     logger.info("Health server started on port %d", Config.PORT)
 
+    # ✅ Start clients BEFORE registering handlers
     await bot.start()
     await assistant.start()
     bot_me = await bot.get_me()
     asst_me = await assistant.get_me()
     logger.info("Bot started     : @%s (id=%d)", bot_me.username, bot_me.id)
     logger.info("Assistant started: @%s (id=%d)", asst_me.username, asst_me.id)
+
+    # ✅ Register handlers AFTER clients are running
+    register_all_handlers(stream)
 
     await stream.start()
 
@@ -103,7 +106,13 @@ async def main() -> None:
     logger.info("  Bot is running. Press Ctrl+C to stop.")
     logger.info("=" * 50)
 
-    await asyncio.Event().wait()
+    try:
+        await asyncio.Event().wait()
+    finally:
+        # ✅ Graceful shutdown — cancels Pyrogram's internal tasks cleanly
+        logger.info("Shutting down clients...")
+        await bot.stop()
+        await assistant.stop()
 
 
 if __name__ == "__main__":
@@ -111,3 +120,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Shutting down — bye!")
+        
