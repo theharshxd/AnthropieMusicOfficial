@@ -6,6 +6,7 @@ import asyncio
 import logging
 import threading
 
+import uvloop
 from pyrogram import Client
 from pyrogram.errors import FloodWait
 
@@ -15,6 +16,9 @@ from core.stream import StreamManager
 from db import mongo
 from handlers import helpers
 from web.server import run_web_server
+
+# ── Install uvloop BEFORE event loop starts ───────────────────────────────────
+uvloop.install()
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -66,16 +70,12 @@ async def db_keepalive_task() -> None:
 
 
 async def _start_client(client: Client, name: str) -> None:
-    """Start a Pyrogram client, waiting out any FloodWait before retrying."""
     while True:
         try:
             await client.start()
             return
         except FloodWait as e:
-            logger.warning(
-                "[main] %s hit FloodWait — Telegram says wait %d seconds. Waiting...",
-                name, e.value,
-            )
+            logger.warning("[main] %s FloodWait — waiting %ds", name, e.value)
             await asyncio.sleep(e.value + 5)
         except Exception as exc:
             logger.error("[main] %s failed to start: %s", name, exc)
@@ -83,53 +83,53 @@ async def _start_client(client: Client, name: str) -> None:
 
 
 async def main() -> None:
-    import uvloop
-    uvloop.install()
-
     logger.info("=" * 50)
     logger.info("  Anthropie Music Bot — Starting")
     logger.info("=" * 50)
 
+    # 1. MongoDB
     await mongo.connect()
 
+    # 2. Load sudo cache
     db_sudos = await mongo.get_sudos()
     for uid in db_sudos:
         helpers.add_sudo_cache(uid)
     logger.info("Loaded %d sudo user(s) from DB.", len(db_sudos))
 
-    stream = StreamManager(assistant, bot)
-
-    web_thread = threading.Thread(target=run_web_server, daemon=True)
-    web_thread.start()
-    logger.info("Health server started on port %d", Config.PORT)
-
-    # ✅ Start clients FIRST, then register handlers
+    # 3. Start bot clients first
     await _start_client(bot, "Bot")
     await _start_client(assistant, "Assistant")
 
     bot_me = await bot.get_me()
     asst_me = await assistant.get_me()
-    logger.info("Bot started     : @%s (id=%d)", bot_me.username, bot_me.id)
-    logger.info("Assistant started: @%s (id=%d)", asst_me.username, asst_me.id)
+    logger.info("Bot      : @%s (id=%d)", bot_me.username, bot_me.id)
+    logger.info("Assistant: @%s (id=%d)", asst_me.username, asst_me.id)
 
-    # ✅ Register handlers AFTER both clients are running
+    # 4. Build stream manager and register handlers
+    stream = StreamManager(assistant, bot)
     register_all_handlers(stream)
 
+    # 5. Start PyTgCalls
     await stream.start()
 
+    # 6. Start web server (health check for Render)
+    web_thread = threading.Thread(target=run_web_server, daemon=True)
+    web_thread.start()
+    logger.info("Health server started on port %d", Config.PORT)
+
+    # 7. Background tasks
     asyncio.create_task(periodic_cleanup_task())
     asyncio.create_task(db_keepalive_task())
     logger.info("Background tasks started.")
 
     logger.info("=" * 50)
-    logger.info("  Bot is running. Press Ctrl+C to stop.")
+    logger.info("  Bot is running.")
     logger.info("=" * 50)
 
     try:
         await asyncio.Event().wait()
     finally:
-        # ✅ Graceful shutdown — prevents "Task destroyed but pending" on exit
-        logger.info("Shutting down clients...")
+        logger.info("Shutting down...")
         try:
             await bot.stop()
         except Exception:
@@ -144,5 +144,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Shutting down — bye!")
-        
+        logger.info("Bye!")
