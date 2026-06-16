@@ -13,6 +13,8 @@ def register(app: Client) -> None:
 
     @app.on_message(filters.command("auth") & filters.group)
     async def auth_cmd(client: Client, msg: Message):
+        if not msg.from_user:
+            return
         if not await is_authorised(client, msg.chat.id, msg.from_user.id):
             return await msg.reply_text("❌ You don't have permission to do that.", quote=True)
 
@@ -28,6 +30,8 @@ def register(app: Client) -> None:
 
     @app.on_message(filters.command("unauth") & filters.group)
     async def unauth_cmd(client: Client, msg: Message):
+        if not msg.from_user:
+            return
         if not await is_authorised(client, msg.chat.id, msg.from_user.id):
             return await msg.reply_text("❌ You don't have permission to do that.", quote=True)
 
@@ -42,6 +46,8 @@ def register(app: Client) -> None:
 
     @app.on_message(filters.command("authlist") & filters.group)
     async def authlist_cmd(client: Client, msg: Message):
+        if not msg.from_user:
+            return
         if not await is_authorised(client, msg.chat.id, msg.from_user.id):
             return await msg.reply_text("❌ You don't have permission to do that.", quote=True)
 
@@ -52,3 +58,4 @@ def register(app: Client) -> None:
         lines = [f"`{uid}`" for uid in users]
         text = "📋 **Authorised Users:**\n" + "\n".join(lines)
         await msg.reply_text(text, quote=True)
+        
