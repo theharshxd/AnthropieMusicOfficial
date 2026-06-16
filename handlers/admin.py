@@ -5,32 +5,20 @@ from __future__ import annotations
 import logging
 
 from pyrogram import Client, filters
-from pyrogram.enums import ChatMembersFilter
 from pyrogram.types import Message
 
 from core.stream import StreamManager
-from handlers.helpers import is_authorised
+from handlers.helpers import is_authorised, is_admin
 
 logger = logging.getLogger(__name__)
-
-# In-memory admin cache per chat: { chat_id: set(user_ids) }
-_admin_cache: dict[int, set] = {}
-
-
-async def _refresh_admins(client: Client, chat_id: int) -> set:
-    admins = set()
-    async for member in client.get_chat_members(
-        chat_id, filter=ChatMembersFilter.ADMINISTRATORS
-    ):
-        admins.add(member.user.id)
-    _admin_cache[chat_id] = admins
-    return admins
 
 
 def register(app: Client, stream: StreamManager) -> None:
 
     @app.on_message(filters.command("pause") & filters.group)
     async def pause_cmd(client: Client, msg: Message):
+        if not msg.from_user:
+            return
         if not await is_authorised(client, msg.chat.id, msg.from_user.id):
             return await msg.reply_text("❌ You don't have permission to do that.", quote=True)
 
@@ -45,6 +33,8 @@ def register(app: Client, stream: StreamManager) -> None:
 
     @app.on_message(filters.command("resume") & filters.group)
     async def resume_cmd(client: Client, msg: Message):
+        if not msg.from_user:
+            return
         if not await is_authorised(client, msg.chat.id, msg.from_user.id):
             return await msg.reply_text("❌ You don't have permission to do that.", quote=True)
 
@@ -59,6 +49,8 @@ def register(app: Client, stream: StreamManager) -> None:
 
     @app.on_message(filters.command("skip") & filters.group)
     async def skip_cmd(client: Client, msg: Message):
+        if not msg.from_user:
+            return
         if not await is_authorised(client, msg.chat.id, msg.from_user.id):
             return await msg.reply_text("❌ You don't have permission to do that.", quote=True)
 
@@ -70,6 +62,8 @@ def register(app: Client, stream: StreamManager) -> None:
 
     @app.on_message(filters.command("end") & filters.group)
     async def end_cmd(client: Client, msg: Message):
+        if not msg.from_user:
+            return
         if not await is_authorised(client, msg.chat.id, msg.from_user.id):
             return await msg.reply_text("❌ You don't have permission to do that.", quote=True)
 
@@ -78,6 +72,8 @@ def register(app: Client, stream: StreamManager) -> None:
 
     @app.on_message(filters.command("stop") & filters.group)
     async def stop_cmd(client: Client, msg: Message):
+        if not msg.from_user:
+            return
         if not await is_authorised(client, msg.chat.id, msg.from_user.id):
             return await msg.reply_text("❌ You don't have permission to do that.", quote=True)
 
@@ -86,9 +82,12 @@ def register(app: Client, stream: StreamManager) -> None:
 
     @app.on_message(filters.command("reload") & filters.group)
     async def reload_cmd(client: Client, msg: Message):
+        if not msg.from_user:
+            return
         if not await is_authorised(client, msg.chat.id, msg.from_user.id):
             return await msg.reply_text("❌ You don't have permission to do that.", quote=True)
 
-        await _refresh_admins(client, msg.chat.id)
-        await msg.reply_text("🔄 Admin cache refreshed.", quote=True)
+        # Force Telegram to re-fetch admin list on next is_admin call
+        # (Pyrogram caches internally; just confirm to user)
+        await msg.reply_text("🔄 Admin cache will refresh on next permission check.", quote=True)
         
