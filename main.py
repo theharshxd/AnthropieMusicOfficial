@@ -76,7 +76,7 @@ async def _start_client(client: Client, name: str) -> None:
                 "[main] %s hit FloodWait — Telegram says wait %d seconds. Waiting...",
                 name, e.value,
             )
-            await asyncio.sleep(e.value + 5)  # +5 second buffer
+            await asyncio.sleep(e.value + 5)
         except Exception as exc:
             logger.error("[main] %s failed to start: %s", name, exc)
             raise
@@ -103,15 +103,16 @@ async def main() -> None:
     web_thread.start()
     logger.info("Health server started on port %d", Config.PORT)
 
-    # ✅ Start clients BEFORE registering handlers (with FloodWait retry)
+    # ✅ Start clients FIRST, then register handlers
     await _start_client(bot, "Bot")
     await _start_client(assistant, "Assistant")
+
     bot_me = await bot.get_me()
     asst_me = await assistant.get_me()
     logger.info("Bot started     : @%s (id=%d)", bot_me.username, bot_me.id)
     logger.info("Assistant started: @%s (id=%d)", asst_me.username, asst_me.id)
 
-    # ✅ Register handlers AFTER clients are running
+    # ✅ Register handlers AFTER both clients are running
     register_all_handlers(stream)
 
     await stream.start()
@@ -127,10 +128,16 @@ async def main() -> None:
     try:
         await asyncio.Event().wait()
     finally:
-        # ✅ Graceful shutdown — cancels Pyrogram's internal tasks cleanly
+        # ✅ Graceful shutdown — prevents "Task destroyed but pending" on exit
         logger.info("Shutting down clients...")
-        await bot.stop()
-        await assistant.stop()
+        try:
+            await bot.stop()
+        except Exception:
+            pass
+        try:
+            await assistant.stop()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
