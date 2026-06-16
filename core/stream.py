@@ -13,7 +13,6 @@ import os
 from pyrogram import Client
 from pytgcalls import PyTgCalls
 from pytgcalls.exceptions import NoActiveGroupCall, NotInCallError
-from pytgcalls.types import MediaStream, StreamEnded
 
 from config import Config
 from core import cleanup, nowplaying
@@ -30,13 +29,12 @@ class StreamManager:
         self.calls = PyTgCalls(assistant)
         self._duration_tasks: dict[int, asyncio.Task] = {}
 
-        # Register stream-ended callback
-        @self.calls.on_stream_end()
-        async def _on_end(_, update):
-            if isinstance(update, StreamEnded):
-                await self._handle_song_end(update.chat_id)
-
     async def start(self) -> None:
+        # Register stream-ended callback before starting
+        @self.calls.on_stream_end()
+        async def _on_end(chat_id: int):
+            await self._handle_song_end(chat_id)
+
         await self.calls.start()
         logger.info("[stream] PyTgCalls started")
 
@@ -58,10 +56,7 @@ class StreamManager:
         state["status"] = "playing"
 
         try:
-            await self.calls.join_group_call(
-                chat_id,
-                MediaStream(file_path),
-            )
+            await self.calls.join_group_call(chat_id, file_path)
             logger.info("[stream] started playing '%s' in %d", track["title"], chat_id)
         except Exception as exc:
             logger.error("[stream] join_group_call failed for %d: %s", chat_id, exc)
@@ -210,3 +205,4 @@ class StreamManager:
         task = self._duration_tasks.pop(chat_id, None)
         if task and not task.done():
             task.cancel()
+            
