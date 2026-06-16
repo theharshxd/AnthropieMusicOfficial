@@ -30,6 +30,8 @@ def register(app: Client) -> None:
 
     @app.on_message(filters.command("addsudo"))
     async def addsudo_cmd(client: Client, msg: Message):
+        if not msg.from_user:
+            return
         if not _owner_or_sudo(msg.from_user.id):
             return await msg.reply_text("❌ Owner/sudo only.", quote=True)
 
@@ -43,6 +45,8 @@ def register(app: Client) -> None:
 
     @app.on_message(filters.command(["delsudo", "rmsudo"]))
     async def delsudo_cmd(client: Client, msg: Message):
+        if not msg.from_user:
+            return
         if msg.from_user.id != Config.OWNER_ID:
             return await msg.reply_text("❌ Owner only.", quote=True)
 
@@ -56,6 +60,8 @@ def register(app: Client) -> None:
 
     @app.on_message(filters.command("sudolist"))
     async def sudolist_cmd(client: Client, msg: Message):
+        if not msg.from_user:
+            return
         if not _owner_or_sudo(msg.from_user.id):
             return await msg.reply_text("❌ Owner/sudo only.", quote=True)
 
@@ -74,6 +80,8 @@ def register(app: Client) -> None:
 
     @app.on_message(filters.command(["broadcast", "gcast"]))
     async def broadcast_cmd(client: Client, msg: Message):
+        if not msg.from_user:
+            return
         if not _owner_or_sudo(msg.from_user.id):
             return await msg.reply_text("❌ Owner/sudo only.", quote=True)
 
@@ -87,7 +95,6 @@ def register(app: Client) -> None:
         flags = msg.text.lower() if msg.text else ""
         pin = "-pin" in flags or "-pinloud" in flags
         pin_loud = "-pinloud" in flags
-        skip_bots = "-nobot" in flags
 
         chats = await mongo.get_served_chats()
         status = await msg.reply_text(
@@ -99,7 +106,6 @@ def register(app: Client) -> None:
 
         for chat_id in chats:
             try:
-                # Skip bot check (can't tell if a chat is a bot group from ID alone)
                 sent = await msg.reply_to_message.copy(chat_id)
                 if pin:
                     try:
@@ -107,7 +113,7 @@ def register(app: Client) -> None:
                     except Exception:
                         pass
                 success += 1
-                await asyncio.sleep(0.2)   # rate limit
+                await asyncio.sleep(0.2)
             except Exception as exc:
                 logger.warning("[broadcast] failed to %d: %s", chat_id, exc)
                 failed += 1
@@ -120,6 +126,8 @@ def register(app: Client) -> None:
 
     @app.on_message(filters.command("restart"))
     async def restart_cmd(client: Client, msg: Message):
+        if not msg.from_user:
+            return
         if not _owner_or_sudo(msg.from_user.id):
             return await msg.reply_text("❌ Owner/sudo only.", quote=True)
 
@@ -129,6 +137,8 @@ def register(app: Client) -> None:
 
     @app.on_message(filters.command("update"))
     async def update_cmd(client: Client, msg: Message):
+        if not msg.from_user:
+            return
         if not _owner_or_sudo(msg.from_user.id):
             return await msg.reply_text("❌ Owner/sudo only.", quote=True)
 
@@ -148,3 +158,4 @@ def register(app: Client) -> None:
 
         await asyncio.sleep(2)
         os.execv(sys.executable, [sys.executable] + sys.argv)
+        
