@@ -3,6 +3,7 @@ services:
     name: anthropie-music
     env: docker
     dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
     envVars:
       - key: BOT_TOKEN
         sync: false
