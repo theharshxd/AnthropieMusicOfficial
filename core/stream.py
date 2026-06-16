@@ -11,7 +11,9 @@ import logging
 import os
 
 from pyrogram import Client
-from pytgcalls import PyTgCalls
+from pytgcalls import PyTgCalls, filters as fl
+from pytgcalls.types import MediaStream, AudioQuality
+from pytgcalls.types import StreamAudioEnded, StreamVideoEnded
 from pytgcalls.exceptions import NoActiveGroupCall, NotInCallError
 
 from config import Config
@@ -30,10 +32,11 @@ class StreamManager:
         self._duration_tasks: dict[int, asyncio.Task] = {}
 
     async def start(self) -> None:
-        # Register stream-ended callback before starting
-        @self.calls.on_stream_end()
-        async def _on_end(chat_id: int):
-            await self._handle_song_end(chat_id)
+        # Register stream-ended callback using new 2.x API
+        @self.calls.on_update(fl.stream_end)
+        async def _on_end(client, update):
+            if isinstance(update, (StreamAudioEnded, StreamVideoEnded)):
+                await self._handle_song_end(update.chat_id)
 
         await self.calls.start()
         logger.info("[stream] PyTgCalls started")
@@ -56,10 +59,13 @@ class StreamManager:
         state["status"] = "playing"
 
         try:
-            await self.calls.join_group_call(chat_id, file_path)
+            await self.calls.play(
+                chat_id,
+                MediaStream(file_path, audio_quality=AudioQuality.HIGH),
+            )
             logger.info("[stream] started playing '%s' in %d", track["title"], chat_id)
         except Exception as exc:
-            logger.error("[stream] join_group_call failed for %d: %s", chat_id, exc)
+            logger.error("[stream] play failed for %d: %s", chat_id, exc)
             state["status"] = "idle"
             return False
 
